@@ -1,0 +1,263 @@
+---
+title: "Brittlestar Vision - *Ophiocoma* orientation: data preparation"
+author: "John D. Kirwan"
+date: "10/30/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This markdown document goes through the pre-modelling statistical analysis of the behavioural data. 
+Load the required packages.
+
+```{r message=FALSE}
+library('circular')
+library('tibble')
+library('readr')
+library('tidyr')
+library('dplyr')
+library('ggplot2')
+```
+
+Load the data, remove incomplete trials, add factors and view a summary.  We remove trials where the animal did not leave the arena centre.
+
+```{r message=FALSE, warning=FALSE}
+df <- read_delim('Ophiocoma_orientation_data.txt',delim = "\t")
+df <- subset.data.frame(df, Relative_heading_degrees != "DNF")
+df$heading <- as.numeric(df$Relative_heading_degrees)*pi/180
+df$heading[df$heading > pi] <- -pi +(df$heading[df$heading > pi] -pi)
+df$Species <- as.factor(df$Species)
+df$Type    <- as.factor(df$Type)
+df$Set     <- as.factor(df$Set)
+df <- subset.data.frame(df, select = -c(Absolute_heading_degrees,Relative_heading_degrees))
+summary(df)
+```
+
+Relative_headings_degrees is the heading of the animal relative to the centre of the stimulus target in degrees whereas absolute_heading_degrees is not relative to the stimulus.
+
+
+Make a variable called heading which is the relative heading, expressed in radians. Normalize to within -pi and pi. This is preferred to degrees as it can be used with circular representations in Stan. Species and stimulus type are made factors; the heading variables in degrees are removed for simplicity.
+
+
+# Using discretized data instead of circular support
+
+```{r}
+df$success   <- vector(length = length(df$heading))
+sectors <- 5 # number of sectors, i.e. reciprocal of sector fraction
+half.sector <- pi/sectors # half the width of the target sector
+
+for(i in 1:length(df$heading)){           ### get tote of each using one fifth of the circle
+  if(is.na(df$heading[i]) == TRUE){df$success[i] <- 0}
+  else if(df$heading[i] >   half.sector ){df$success[i] <- 0}    ## pi/5 beforehand
+  else if(df$heading[i] <= -half.sector ){df$success[i] <- 0}  ## -pi/5 beforehand
+  else{df$success[i] <- 1}  }
+```
+
+
+```{r}
+df %>% filter(Set == 2017) -> df1
+df1 <- droplevels.data.frame(df1)
+```
+
+
+We plot the data according to species and stimulus type. This plotting function was provided by James J. Foster (Lund University) and slightly modified.
+
+```{r message=TRUE, warning=TRUE}
+library(circular)
+Cplot <- function(headings, sp, bt, ax, ...){
+	#fit mean axis, fits mean direction unless otherwise specified
+	if(missing(ax)){ax <- F}
+	#spacing of stacked points, now automatically stacks towards centre unless otherwise specified
+	if(missing(sp) & missing(bt)){sp <- 0.04}
+	#bt specifies the stacking by a multipicative factor, 1 = stacked, 2 = 1 point's space between, 0.5 = half overlapping
+	if( missing(sp) & !(missing(bt)) ){sp <- bt*.04}
+	#	Get functions and packages
+	if(sum(rownames(installed.packages()) %in% c('CircStats', 'circular'), na.rm = T)<2){
+		install.packages(c('CircStats', 'circular'))	}
+	if(!(	sum('CircCI'%in% ls())	)){
+		CircCI <- function(mn, lci, uci, out, zro, drc, lng, ...){
+			if(missing(lng)){lng<-10*360/5};	if(missing(drc)){drc<-'clock'}
+			if(missing(zro)){zro <- pi/2};if(missing(out)){out <- 0.05}
+			if(missing(uci)){uci <- lci}
+			lwr <- mn - lci;	upr <- mn + uci
+			circ.pos <- ( ((drc == 'clock')-1)*2 +1) * 
+				-seq( pi*lwr/180, pi*upr/180, length.out = lng) + zro
+			circ.x <- cos(circ.pos)*(1+out);	circ.y <- sin(circ.pos)*(1+out)
+			lines(circ.x, circ.y, ...)
+			lines.circular( as.circular(rep(lwr,2),units = 'degrees', 
+				type = 'angles', modulo = '2pi', zero = zro, 
+				rotation = drc, template = 'none'), 
+				out*c(0.5, 1.5), modulo = '2pi', 
+				zero = zro, rotation = drc, ...)
+			lines.circular(as.circular(rep(upr,2),units = 'degrees', 
+				type = 'angles', modulo = '2pi', zero = zro, 
+				rotation = drc, template = 'none'),
+			 	out*c(0.5, 1.5), modulo = '2pi', zero = zro, 
+			 	rotation = drc, ...) 		}	}
+	if(!(	sum('mycirc'%in% ls())	)){
+		mycirc <- function(angles, clock){
+			if(missing(clock)){clock <- T}
+			if(clock){
+			return(		as.circular(angles,units='degrees',type='angles',
+			modulo='2pi',zero=pi/2,rotation='clock',	template='none')	)
+				}else{
+				as.circular(angles,units='degrees',type='angles',
+				 modulo='2pi',zero=pi/2,rotation='counter',template='none')
+				}	}	}
+	#circular plot settings
+	increments <- 5 #degrees
+	zr <- pi/2 #start at top of screen (pi*	90	/180)
+	bn <-  72  #10*10*360/5 #bins 	
+	degrad <- 180/pi #conversion from radians to degrees
+	tcl <- rgb(1,1,1,0)#transparent colour
+	pcl <- rgb(.3,.1,.1,.5)#point colour
+	#plot characters
+	lw <- 0.5 #line width
+	pnt <- 3 # 2.5 #point size
+	arw <- 10 #arrowhead angle
+	arl <- 0 #0.1 #arrowhead length
+	#	set up input variables
+	hd <- mycirc(headings)
+	sm <- summary(hd)
+	sv <- degrad*sd.circular(hd, na.rm=T)
+	lbl <- 0 # 90*(1:4-1)
+	plot(hd, col=tcl, main="", zero=zr, axes=F, shrink=1,tol=0.075)
+	axis.circular(1, at = mycirc(lbl), labels = lbl)
+	par(new=T)
+	plot.circular(hd, col=tcl,main="",zero=zr,axes=F,shrink=1.05,tol=0.075)
+	points(hd,stack=T,bin=bn,sep=-sp,zero=zr,...)
+	if(!(ax)){
+		arrows.circular( mycirc(sm['Mean']),zero=zr,col='red4',lwd=3,
+		 length=arl,angle=arw,shrink = sm['Rho'])
+		 CircCI(sm['Mean'], sv, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)	}else{
+		 sBin_Spp <- summary(mycirc(hd*2))
+		 sv2 <- degrad*sd.circular(hd*2, na.rm=T)/2
+		 arrows.circular( mycirc(sBin_Spp['Mean']/2),zero=zr,col='red4',lwd=3,
+		 length=arl,angle=arw,shrink = sBin_Spp['Rho'])
+		 arrows.circular( mycirc(180+sBin_Spp['Mean']/2),zero=zr,col='red4',lwd=3,
+		 length=arl,angle=arw,shrink = sBin_Spp['Rho'])
+		 CircCI(sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
+		 CircCI(180+sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
+	 } }
+```
+
+
+Observations divided by species only. 
+
+```{r message=FALSE, warning=FALSE}
+par(mfrow = c(1,2)); par(mar = c(1, 1, 1, 1) + 0.1)
+  for(j in levels(as.factor(df1$Species))){
+  tempx <- as.circular(df1$heading[df1$Species == j])
+     Cplot(tempx)
+     title(j)}
+```
+
+*Ophiocoma wendtii* definitely orients in the experimental treatments (middle) but unclear for *O. pumila* and the *O. wendtii* control trials are not clearly oriented. We can divvy up by both species and stimulus type, as below.
+
+```{r message=TRUE, warning=FALSE}
+par(mfrow = c(2,3)); par(mar = c(1, 1, 1, 1) + 0.1)
+for(i in levels(as.factor(df1$Species))){
+  for(j in levels(as.factor(df1$Type))){
+  tempx <- as.circular(df1$heading[df1$Type == j & df1$Species == i])
+     Cplot(tempx)
+     title(paste(i,j))}}
+```
+
+The left column of plots are the black and white patterns, the middle column are  and the row below are the difference of DoGians pattern. The top row of plots are of the species *Ophiocoma pumila* and the bottom *O. wendtii*. 
+
+For both pattern types, we can see from the above plots that there is possible clustering towards the stimulus in the case of *wendtii*, whereas there is no such clear evidence in the case of *pumila*. It is especially clear for *wendtii* with the black and white stimulus. The red line indicates the mean resultant length (\rho), where a line which reaches the circle edge is a \rho of 1 indicating complete clustering and no line indicates a \rho of 0 and complete uniformity. The direction of the line is the circular mean of the headings. 
+
+The following makes a summary dataframe:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df1 %>%
+  mutate(in.pent = ifelse(abs(heading) < pi/5, 1, 0)) %>% # for data in radians -pi to pi
+  group_by(Species,Type) %>%                # condition name
+  summarize(num = length(heading),
+            rho = rho.circular(heading),
+            kappa = unlist(mle.vonmises(heading)[3]),
+            v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
+            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
+            rayl.stat=unlist(rayleigh.test(heading)[1]),
+            rayl.p= unlist(rayleigh.test(heading)[2]),
+            c.mean = unlist(mean.circular(heading)[1]),
+            pent.prop = sum(in.pent)/length(in.pent)
+  ) -> spp_type.summary            ## output dataframe
+
+spp_type.summary
+
+```
+
+The table shows the test statistic and p-value for test of uniformity. The pent prop is the proprtion which fall into the 72 degree sectpr with the target midpoint at its midpoint. The rhos describe what was indicated by the red arrows in the plots (mean resultant length).
+
+The table shows the test statistic and p-value for test of uniformity. The quad.prop is the proprtion which fall into the quadrant with the target midpoint at its midpoint. The rhos describe what was indicated by the red arrows in the plots.
+
+
+```{r}
+df1 %>%
+  mutate(in.quad = ifelse(abs(heading) < pi/4, 1, 0)) %>% # for data in radians -pi to pi
+  mutate(in.pent = ifelse(abs(heading) < pi/5, 1, 0)) %>% # for data in radians -pi to pi
+  mutate(in.sext = ifelse(abs(heading) < pi/6, 1, 0)) %>% # for data in radians -pi to pi
+  group_by(Species,Type) %>%   
+  summarize(n_obs = n(),                   ## observations for treatment
+            quad.prop = sum(in.quad)/length(in.quad),
+            pent.prop = sum(in.pent)/length(in.pent),
+            sext.prop = sum(in.sext)/length(in.sext)        ) -> chance_plot  
+
+chance_plot %>% 
+  filter(Type == "DoG") %>%
+  ggplot(aes(Species,sext.prop)) + geom_point(aes(y=sext.prop),color="brown")   + 
+  geom_hline(yintercept = 1/5, color = "pink") +
+  geom_hline(yintercept = 1/4,color = "blue") +
+  geom_hline(yintercept = 1/6, color = "brown") +  
+  geom_point(aes(y=quad.prop), color="blue",size=2)        +             
+  geom_point(aes(y=pent.prop), color="pink") +
+  ylab('Proportion oriented')  + theme_classic()
+```
+
+This plot above is to show what proportions of observations fall into the target areas (adjacent to the centre of the stimulus target) alongside what would be expected by chance for the DoG (continuous visual) stimulus with differing sizes of target sector. Brown, blue and pink represent 60, 72 and 90 degree sectors, respectively. The horzontal lines are chance lines for those sectors - the proportion of successes which should occur by random chance. The dots represent the data. 
+
+
+# 2019 data - comparing diel period and adaptive states
+
+As per the prior experiments, the control was performed in daylight with light adapted animals.
+
+```{r}
+df %>% filter(Set == 2019) -> df2
+df2 <- droplevels.data.frame(df2)
+```
+
+Observations divided by species only. For comparison, the control data for *Ophiocoma wendtii* from subsequent set of experiments (2019) is included in the rightmost plot. 
+
+
+```{r message=FALSE, warning=FALSE}
+par(mfrow = c(2,2)); par(mar = c(1, 1, 1, 1) + 0.1)
+  for(j in levels(as.factor(df2$Period_adaptation))){
+  tempx <- as.circular(df2$heading[df2$Period_adaptation == j])
+     Cplot(tempx)
+     title(j)}
+```
+
+In the case of the light-adapted animals tested at night, and possibly the dark-adapted animals tested in daylight, there appears to be some concentration towards the centre and edges of the 50 degree stimulus, which could represent avoidance of the light flanks.  
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df2 %>%
+  mutate(in.pent = ifelse(abs(heading) < pi/5, 1, 0)) %>% # for data in radians -pi to pi
+  group_by(Period_adaptation) %>%                # condition name
+  summarize(num = length(heading),
+            rho = rho.circular(heading),
+            kappa = unlist(mle.vonmises(heading)[3]),
+            v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
+            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
+            rayl.stat=unlist(rayleigh.test(heading)[1]),
+            rayl.p= unlist(rayleigh.test(heading)[2]),
+            c.mean = unlist(mean.circular(heading)[1]),
+            pent.prop = sum(in.pent)/length(in.pent)
+  ) -> condition.summary            ## output dataframe
+
+condition.summary
+```
+
+No evidence is found for concentration of headings. In addition, we modelled the data according to a von Mises distribution and (considering animals approaching the stimulus as successful orientation) to a binomial distribution.

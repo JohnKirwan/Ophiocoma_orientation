@@ -1,5 +1,5 @@
 ---
-title: "Ophiocoma_orientation_modelling_I"
+title: "Ophiocoma orientation modelling according to binomial distribution"
 author: "John Kirwan"
 date: "11/2/2019"
 output: html_document
@@ -20,6 +20,7 @@ library('tidyr')
 library('dplyr')
 library('ggplot2')
 library('rstan')
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
 rstan_options(auto_write = TRUE)
 library('brms')
 ```
@@ -44,7 +45,6 @@ for(i in 1:length(df$heading)){           ### get tote of each using one fifth o
   else if(df$heading[i] <= -half.sector ){df$success[i] <- 0}  ## -pi/5 beforehand
   else{df$success[i] <- 1}  }
 df %>% filter(Set == 2017) -> df1
-df %>% filter(Type == "control") -> wendtii_control
 df1 <- droplevels.data.frame(df1)
 df %>% filter(Set == 2019) -> df2
 df2 <- droplevels.data.frame(df2)
@@ -56,8 +56,8 @@ df2 <- droplevels.data.frame(df2)
 The discrete visual (3 bars) stimulus in the 2017 set of experiments has been thus far included but, for simplicity, is excluded in the subsequent models, as the continuous visual (DoG) - the main effect - is used in preference. A differing discrete visual stimulus (the 3 bars variant) is, however, used for the 2019 experiments. The variant uses two white flanks of equal width of the dark target but half the amplitude. 
 
 ```{r}
-df1 %>%
-  filter(Type != "3_bars") -> df1
+#df1 %>%
+  #filter(Type != "3_bars") -> df1
 df1 <- droplevels(df1)
 ```
 
@@ -65,7 +65,6 @@ df1 <- droplevels(df1)
 ```{r}
 Bin_Spp.formula <- bf(success ~ Species, family = bernoulli(link='logit'))
 Bin_Spp.prior <- c(prior(normal(0, 2), class = "b"))
-              #prior(normal(0, 3), class = "intercept"))
 
 Bin_Spp.fit <- brm(Bin_Spp.formula,
                prior = Bin_Spp.prior, iter = 20000,
@@ -74,18 +73,21 @@ Bin_Spp.fit <- brm(Bin_Spp.formula,
 
 Bin_Spp.fit <- add_criterion(Bin_Spp.fit, criterion=c('loo','waic'))
 
-#dpost <- posterior_samples(Bin_Spp.fit)
-marginal_effects(Bin_Spp.fit, method = c("fitted"), #effects = "Species",
-                 resolution = 1000, robust = T, #points = T,#dpar = "kappa"
+marginal_effects(Bin_Spp.fit, method = c("fitted"), 
+                 resolution = 1000, robust = T, 
                  theme=theme_classic(), nsamples = 1000, scale='response',
                                   re_formula = NULL,ask=F) 
 ```
 
 
 ```{r}
+pp_check(Bin_Spp.fit, type="rootogram")
+```
+
+
+```{r}
 Bin_Type.formula <- bf(success ~ Type, family = bernoulli(link='logit'))
 Bin_Type.prior <- c(prior(normal(0, 2), class = "b"))
-              #prior(normal(0, 3), class = "intercept"))
 
 Bin_Type.fit <- brm(Bin_Type.formula,
                prior = Bin_Type.prior, iter = 20000,
@@ -104,6 +106,10 @@ marginal_effects(Bin_Type.fit, method = c("fitted"), resolution = 1000, robust =
 ```
 
 
+```{r}
+pp_check(Bin_Type.fit, type="rootogram")
+```
+
 ## Both Species and stimulus type
 
 ```{r}
@@ -116,7 +122,6 @@ Bin_Both.fit <- brm(Bin_Both.formula,
                control = list(adapt_delta = 0.9))
 
 Bin_Both.fit <- add_criterion(Bin_Both.fit, criterion=c('loo','waic'))
-
 ```
 
 
@@ -126,7 +131,6 @@ logistic <- function (x) { p <- 1/(1 + exp(-x)); p <- ifelse(x == Inf, 1, p);   
 
 pumila   <- logistic(dpost$b_Intercept)
 wendtii  <- logistic(dpost$b_Intercept + dpost$b[,1])
-#wendtii  <- logistic(dpost$b_Intercept + dpost$b[,2])
 brittlestar_probs <- as_tibble(cbind(pumila,wendtii))
 ```
 
@@ -137,6 +141,12 @@ marginal_effects(Bin_Both.fit, method = c("fitted"),
                  resolution = 1000, robust = T, 
                  theme=theme_classic(), nsamples = 1000,
                                   re_formula = NULL,ask=F) 
+```
+
+Posterior predictive check of the count model, comparing expected counts to the data.
+
+```{r}
+pp_check(Bin_Both.fit, type="rootogram")
 ```
 
 
@@ -152,14 +162,21 @@ Bin_Both_Interaction.fit <- brm(Bin_Both_Interaction.formula,
                control = list(adapt_delta = 0.99))
 
 Bin_Both_Interaction.fit <- add_criterion(Bin_Both_Interaction.fit, criterion=c('loo','waic'))
-
+summary(Bin_Both_Interaction.fit)
 ```
 
+
 ```{r}
-marginal_effects(Bin_Both_Interaction.fit, method = c("fitted"), #effects = "Species",
+marginal_effects(Bin_Both_Interaction.fit, method = c("fitted"), 
                  resolution = 1000, robust = T,
                  theme=theme_classic(), nsamples = 1000, scale='response',
                                   re_formula = NULL,ask=F) 
+```
+
+Posterior predictive check of the count model, comparing expected counts to the data.
+
+```{r}
+pp_check(Bin_Both_Interaction.fit, type="rootogram")
 ```
 
 
@@ -177,36 +194,86 @@ loo_compare(Bin_Spp.fit,Bin_Type.fit,Bin_Both.fit,Bin_Both_Interaction.fit,crite
 
 The model for which only species is included is considered slightly more likely than those which varies only or stimulus type or both. The model where both effects are considered is slightly les likely, followed by that which also includes the interaction between them. These first three have very similar values (within the se range) and much more likely than the remaining model which considers stimulus type but not species. We continue with the model including both effects are their interaction.
 
-The following code simulates random binomial data and then contrasts this with each of the treatments. 
-
 ```{r}
 dpost <- posterior_samples(Bin_Both_Interaction.fit)
 logistic <- function (x) { p <- 1/(1 + exp(-x)); p <- ifelse(x == Inf, 1, p);   p }
+```
+
+
+```{r message=FALSE}
+library(ggthemes)
+theme_set(theme_tufte()) 
+
+pumila_1_bar     <- dpost$b_Intercept
+pumila_3_bars    <- dpost$b_Intercept + dpost$b_Type3_bars
+pumila_DoG       <- dpost$b_Intercept + dpost$b_TypeDoG
+wendtii_1_bar    <- dpost$b_Intercept + dpost$b_Specieswendtii
+wendtii_3_bars   <- dpost$b_Intercept + dpost$b_Specieswendtii + 
+                     dpost$b_Type3_bars + dpost$`b_Specieswendtii:Type3_bars`
+wendtii_DoG     <-  dpost$b_Intercept + dpost$b_Specieswendtii + 
+                     dpost$b_TypeDoG + dpost$`b_Specieswendtii:TypeDoG`
+
+vals <- as_tibble(cbind(pumila_1_bar,pumila_3_bars,pumila_DoG,wendtii_1_bar,wendtii_3_bars,wendtii_DoG))
+vals <- gather(vals)
+
+vals %>% mutate(value = logistic(value)) %>%
+  ggplot(aes(key,value)) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  +
+  theme_classic() + ylim(0,1) + labs(title = "Proportion") + ylab('proportions')
+```
+
+
+```{r Between Spp contrasts}
+one_bar     <- wendtii_1_bar - pumila_1_bar
+three_bars  <- wendtii_3_bars - pumila_3_bars
+DoG         <- wendtii_DoG - pumila_DoG
+
+Spp_contrasts <- as_tibble(cbind(one_bar,three_bars,DoG))
+Spp_contrasts <- gather(Spp_contrasts)
+
+Spp_contrasts %>%
+  ggplot(aes(x=value,group=key,colour=key)) + 
+  geom_density(size=1.5) + theme_classic() + geom_vline(xintercept = 0)
+```
+
+The above plot contrasts the estimates between the two species at each of the stimulus types to find the probability that they have the same orientedness. This is enumerated below as percentages:
+
+```{r}
+print(paste0("one_bar: "  ,as.character( 
+  round(sum(one_bar   < 0) / length(one_bar)  * 100,1)),"%"))
+print(paste0("three_bars: "  , as.character( 
+  round(sum(three_bars   < 0) / length(three_bars)  * 100,1)),"%"))
+print(paste0("DoG: "  , as.character( 
+  round(sum(DoG   < 0) / length(DoG)  * 100,1)),"%"))
+```
+
+The Spp. clearly differ for the single dark bar (Phototactic) and main experimental DoG (continuous visual) stimuli but not so for the 3 bars (discrete visual) stimulus. 
+
+The following code simulates random binomial data and then contrasts this with each of the treatments. 
+
+```{r}
 
 set.seed(555)
 data <- rbinom(20000,40,1/sectors)/40
 logit    <- function (x) { log(x) - log(1 - x) }
 logit.data <- logit(data)
 
-makemost <- function(contrast_dist){
-  if(  sum(contrast_dist < 0) / length(contrast_dist) > 0.5 ){
-    contrast_dist <- - contrast_dist
-  }else contrast_dist <- contrast_dist }
+pumila_1_bar     <- dpost$b_Intercept - logit.data
+pumila_3_bars    <- dpost$b_Intercept + dpost$b_Type3_bars - logit.data
+pumila_DoG       <- dpost$b_Intercept + dpost$b_TypeDoG - logit.data
+wendtii_1_bar    <- dpost$b_Intercept + dpost$b_Specieswendtii - logit.data
+wendtii_3_bars   <- dpost$b_Intercept + dpost$b_Specieswendtii + 
+                     dpost$b_Type3_bars + dpost$`b_Specieswendtii:Type3_bars` - logit.data
+wendtii_DoG     <-  dpost$b_Intercept + dpost$b_Specieswendtii + 
+                     dpost$b_TypeDoG + dpost$`b_Specieswendtii:TypeDoG` - logit.data
 
-pumila_1_bar <- ((dpost$b_Intercept - logit.data))
-pumila_DoG   <- ((dpost$b_Intercept + dpost$b_TypeDoG -logit.data))
-wendtii_1_bar   <- ((dpost$b_Intercept + dpost$b_Specieswendtii -logit.data))
-wendtii_DoG     <- ((dpost$b_Intercept + dpost$b_Specieswendtii +
-                       dpost$`b_Specieswendtii:TypeDoG` -logit.data))
-
-contrastz <- as_tibble(cbind(pumila_1_bar,pumila_DoG,wendtii_1_bar,wendtii_DoG))
+contrastz <- as_tibble(cbind(
+  pumila_1_bar,pumila_3_bars,pumila_DoG,wendtii_1_bar,wendtii_3_bars,wendtii_DoG))
 contrastz <- gather(contrastz)
 
 contrastz %>%
-  ggplot(aes(x=value,group=key,colour=key,fill=key,alpha=0.02)) + 
-  geom_density() + theme_classic() + geom_vline(xintercept = 0)
+  ggplot(aes(x=value,group=key,colour=key)) + 
+  geom_density(size=1.5) + theme_classic() + geom_vline(xintercept = 0)
 ```
-
 
 These (below) are the contrast with the simulated random data (assuming 40 observations per treatment). The percentage can be interpreted as the probability that the data is at or beow the value expected by random chance. 
 
@@ -214,10 +281,14 @@ These (below) are the contrast with the simulated random data (assuming 40 obser
 print("Percentage overlap with simulated random data")
 print(paste0("pumila_1_bar: "  ,as.character( 
   round(sum(pumila_1_bar   < 0) / length(pumila_1_bar)  * 100,1)),"%"))
+print(paste0("pumila_3_bars: "  , as.character( 
+  round(sum(pumila_3_bars   < 0) / length(pumila_3_bars)  * 100,1)),"%"))
 print(paste0("pumila_DoG: "  , as.character( 
   round(sum(pumila_DoG   < 0) / length(pumila_DoG)  * 100,1)),"%"))
 print(paste0("wendtii_1_bar: " ,as.character(
   round(sum(wendtii_1_bar  < 0) / length(wendtii_1_bar)  * 100,1)),"%"))
+print(paste0("wendtii_3_bars: "  , as.character( 
+  round(sum(wendtii_3_bars   < 0) / length(wendtii_3_bars)  * 100,1)),"%"))
 print(paste0("wendtii_DoG: " ,as.character( 
   round(sum(wendtii_DoG  < 0) / length(wendtii_DoG)  * 100,1)),"%"))
 ```
@@ -231,7 +302,6 @@ This probability is small for the *O. wendtii* treatments using the bar (photota
 ```{r}
 Bin_Diel.formula <- bf(success ~ Period_adaptation, family = bernoulli(link='logit'))
 Bin_Diel.prior <- c(prior(normal(0, 2), class = "b"))
-              #prior(normal(0, 3), class = "intercept"))
 
 Bin_Diel.fit <- brm(Bin_Diel.formula,
                prior = Bin_Diel.prior, iter = 20000,
@@ -242,13 +312,16 @@ Bin_Diel.fit <- add_criterion(Bin_Diel.fit, criterion=c('loo','waic'))
 ```
 
 
-
 The below plot indicates how orientation towards the stimulus differs for the four experimental conditions and the control.
 
 ```{r}
 marginal_effects(Bin_Diel.fit, method = c("fitted"), resolution = 1000, robust = T, 
                  theme=theme_classic(), nsamples = 1000, 
                                   re_formula = NULL,ask=F) 
+```
+
+```{r}
+pp_check(Bin_Diel.fit, type="rootogram")
 ```
 
 The marginal estimates at the median (of successful orientation for *O. wendtii* in differing diel and adaptive conditions) fall between 0.1 and 0.25, where the rate of success by random chance is 0.2, incidating the animals are disoriented. They are in the range of estimates for the earlier *O. pumila* treatments but not those of *O. wendtii* with the earlier bar (phototactic) and DoG (continuous visual) conditions.

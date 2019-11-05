@@ -1,0 +1,682 @@
+---
+title: "Ophiocoma von Mises modelling"
+author: "John Kirwan"
+date: "11/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r message=FALSE}
+options(mc.cores = parallel::detectCores())
+library('circular')
+library('tibble')
+library('readr')
+library('tidyr')
+library('dplyr')
+library('ggplot2')
+library('rstan')
+rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+library('brms')
+```
+
+The requisite part of pre-modelling markdown document is condensed below.
+
+```{r message=FALSE, warning=FALSE}
+df <- read_delim('Ophiocoma_orientation_data.txt',delim = "\t")
+df <- subset.data.frame(df, Relative_heading_degrees != "DNF")
+df$heading <- as.numeric(df$Relative_heading_degrees)*pi/180
+df$heading[df$heading > pi] <- -pi +(df$heading[df$heading > pi] -pi)
+df$Species <- as.factor(df$Species)
+df$Type    <- as.factor(df$Type)
+df$Set     <- as.factor(df$Set)
+df <- subset.data.frame(df, select = -c(Absolute_heading_degrees,Relative_heading_degrees))
+df$success   <- vector(length = length(df$heading))
+sectors <- 5 # number of sectors, i.e. reciprocal of sector fraction
+half.sector <- pi/sectors # half the width of the Period_adaptation sector
+for(i in 1:length(df$heading)){           ### get tote of each using one fifth of the circle
+  if(is.na(df$heading[i]) == TRUE){df$success[i] <- 0}
+  else if(df$heading[i] >   half.sector ){df$success[i] <- 0}    ## pi/5 beforehand
+  else if(df$heading[i] <= -half.sector ){df$success[i] <- 0}  ## -pi/5 beforehand
+  else{df$success[i] <- 1}  }
+df %>% filter(Set == 2017) -> df2017
+df2017 <- droplevels.data.frame(df2017)
+df %>% filter(Set == 2019) -> df2019
+df2019 <- droplevels.data.frame(df2019)
+```
+
+## "Null" model
+
+To examine to what extent clustering occurs we can first run a model which looks at the observations but does not consider the species, giving a grand mean across the trials. The code below sets the model formula. 
+
+
+```{r}
+Mises_1_intercept.formula <- bf(heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+Mises_1_intercept.data    <- make_standata(heading ~ 1, kappa ~ 1,
+                                  data = df2017, family = von_mises(link='tan_half'))
+```
+
+## Priors
+
+Now, to pick a suitable prior for the kappa value. I have used rgamma to look at different parameterizations of the gamma / log-normal distributions to use a positive bounded prior for kappa (concentration). The function A1() from circular relates this to \rho, which is more intuitive. The idea is to pick a reasonable range for the probability mass, without weighting it to heavily in either direction. The prior ideally ought to be *weakly informative*, giving very little information - even if you have it - to influence the posterior, except to insure convergence and avoid nonsensical values.
+
+
+```{r echo= FALSE}
+hist (A1(rgamma(10000,5,0.8)))
+hist(A1(rlnorm(10000,1,0.75)))
+hist(A1(rlnorm(10000,0.25,0.75)))
+```
+
+
+The code below fits the model. 
+
+```{r}
+Mises_1_intercept.prior = c(prior(lognormal(0.25, 0.75),  class = Intercept, dpar="kappa"))
+
+Mises_1_intercept.fit <- brm( Mises_1_intercept.formula,
+  prior = Mises_1_intercept.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_1_intercept.fit <- add_criterion(Mises_1_intercept.fit, c("loo","waic")) 
+summary(Mises_1_intercept.fit)
+```
+
+
+```{r}
+pp_check(Mises_1_intercept.fit, type="dens_overlay", nsamples=200)
+```
+
+Rhats of 1 and a large effective sample size in relation to the total number of obervations. The model converged well. So, let's plot the posterior distributions and the MCMC chains.
+
+```{r echo=FALSE}
+plot(Mises_1_intercept.fit)
+```
+
+To interpret these, we can extract the values and reverse the log-link.
+
+```{r echo=FALSE}
+Mises_1_intercept.post <- posterior_samples(Mises_1_intercept.fit)
+Mises_1_intercept.post$k_logged <- (Mises_1_intercept.post$b_kappa_Intercept)
+Mises_1_intercept.post$R <- A1(exp(Mises_1_intercept.post$k_logged))
+
+Mises_1_intercept.post %>%
+  ggplot(aes(x=k_logged)) + geom_density() + theme_classic()
+
+Mises_1_intercept.post %>%
+  ggplot(aes(x=R)) + geom_density() + theme_classic()
+
+```
+
+And here is one with a dummy variable included to distingiush the signal types but still without species considered.
+
+```{r echo=FALSE}
+Mises_Type.formula <- bf(heading ~ 0, kappa ~ Type, family = von_mises(link='tan_half'))
+Mises_Type.data    <- make_standata(heading ~ Type, kappa ~ 1,
+                                  data = df2017, family = von_mises(link='tan_half'))
+
+Mises_Type.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+              prior(normal(0, 1), class = b, dpar="kappa")  )
+
+Mises_Type.fit <- brm( Mises_Type.formula,
+  prior = Mises_Type.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.999999)) 
+
+Mises_Type.fit <- add_criterion(Mises_Type.fit, c("loo","waic","R2")) 
+plot(Mises_Type.fit)
+```
+
+```{r}
+summary(Mises_Type.fit)
+```
+
+
+Marginal effects at the median.
+
+```{r}
+marginal_effects(Mises_Type.fit,method = "fitted",dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL,ask=F)
+```
+
+Posterior rpedictive check.
+
+```{r}
+pp_check(Mises_Type.fit, type="dens_overlay", nsamples=200)
+```
+
+We can implement a model which divvies it up by species.
+
+```{r echo=FALSE}
+Mises_Spp.formula <- bf(heading ~ 0, kappa ~ Species, family = von_mises(link='tan_half'))
+Mises_Spp.data    <- make_standata(heading ~ Species, kappa ~ 1,
+                                  data = df2017, family = von_mises(link='tan_half'))
+
+Mises_Spp.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+              prior(normal(0, 1), class = b, dpar="kappa")  )
+
+Mises_Spp.fit <- brm( Mises_Spp.formula,
+  prior = Mises_Spp.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.999999)) 
+
+Mises_Spp.fit <- add_criterion(Mises_Spp.fit, c("loo","waic","R2")) 
+plot(Mises_Spp.fit)
+```
+
+
+```{r}
+summary(Mises_Spp.fit)
+```
+
+
+```{r}
+marginal_effects(Mises_Spp.fit,method = "fitted",dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL,ask=F)
+```
+
+```{r}
+pp_check(Mises_Spp.fit, type="dens_overlay", nsamples=200)
+```
+
+Another version with the effects of Type and Species.
+
+```{r}
+Mises_Both.formula <- bf(heading ~ 0, kappa ~ Species + Type, family = von_mises(link='tan_half'))
+Mises_Both.data    <- make_standata(heading ~ 1, kappa ~ Species*Type,
+                                  data = df2017, family = von_mises(link='tan_half'))
+
+Mises_Both.prior = c( prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+               prior(normal(0, 1), class = b, dpar="kappa")
+             )
+
+Mises_Both.fit <- brm( Mises_Both.formula,
+  prior = Mises_Both.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_Both.fit <- add_criterion(Mises_Both.fit, criterion=c("loo","waic","R2")) 
+```
+
+Model summary.
+
+```{r}
+summary(Mises_Both.fit)
+```
+
+Posterior predictive check.
+
+```{r}
+pp_check(Mises_Both.fit, type="dens_overlay", nsamples=200)
+```
+
+Marginal effect at the median.
+
+```{r}
+marginal_effects(Mises_Both.fit,method = "fitted",dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL,ask=F)
+```
+
+
+Further model with both effects and their interaction are included.
+
+```{r}
+Mises_Both_Interaction.formula <- bf(heading ~ 0, kappa ~ Species*Type, family = von_mises(link='tan_half'))
+Mises_Both_Interaction.data    <- make_standata(heading ~ 1, kappa ~ Species*Type,
+                                  data = df2017, family = von_mises(link='tan_half'))
+
+Mises_Both_Interaction.prior = c( prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+               prior(normal(0, 1), class = b, dpar="kappa"))
+
+Mises_Both_Interaction.fit <- brm( Mises_Both_Interaction.formula,
+  prior = Mises_Both_Interaction.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_Both_Interaction.fit <- add_criterion(Mises_Both_Interaction.fit, criterion=c("loo","waic")) 
+summary(Mises_Both_Interaction.fit)
+```
+
+```{r echo=FALSE}
+plot(Mises_Both_Interaction.fit)
+```
+
+```{r}
+pp_check(Mises_Both_Interaction.fit, type="dens_overlay", nsamples=200)
+```
+
+```{r}
+marginal_effects(Mises_Both_Interaction.fit, method = c("fitted"),
+                 dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL, ask=F) 
+```
+
+Repeat with a scaled predictor to see what influence this has.
+
+```{r}
+df2017$heading.s <- scale(df2017$heading)
+scaling   <- attr(df2017$scaled,"scaled:scale")
+centering <- attr(df2017$scaled,"scaled:center") 
+
+Mises_Both_Interaction_scaled.formula <- bf(heading.s ~ 0, kappa ~ Species*Type, family = von_mises(link='tan_half'))
+Mises_Both_Interaction_scaled.data    <- make_standata(heading.s ~ 1, kappa ~ Species*Type,
+                                  data = df2017, family = von_mises(link='tan_half'))
+
+Mises_Both_Interaction_scaled.prior = c( prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+               prior(normal(0, 1), class = b, dpar="kappa")             )
+
+
+Mises_Both_Interaction_scaled.fit <- brm( Mises_Both_Interaction_scaled.formula,
+  prior = Mises_Both_Interaction_scaled.prior, iter = 20000,
+  data = df2017, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_Both_Interaction_scaled.fit <- add_criterion(Mises_Both_Interaction_scaled.fit, c("loo","waic")) 
+summary(Mises_Both_Interaction_scaled.fit)
+```
+
+
+```{r}
+pp_check(Mises_Both_Interaction_scaled.fit, type="dens_overlay", nsamples=200)
+```
+
+
+
+```{r}
+loo_compare(Mises_1_intercept.fit,Mises_Type.fit,Mises_Spp.fit,Mises_Both.fit,
+            Mises_Both_Interaction.fit,Mises_Both_Interaction_scaled.fit,criterion="loo")
+```
+
+```{r}
+loo_compare(Mises_1_intercept.fit,Mises_Type.fit,Mises_Spp.fit,Mises_Both.fit,
+            Mises_Both_Interaction.fit,Mises_Both_Interaction_scaled.fit,criterion="waic")
+```
+
+The Mises_Both_Interaction model is the most likely.
+
+
+Above are the kappa values and credible intervals for each species. Now, we get the R values.
+
+```{r}
+Mises_Both_Interaction.post <- posterior_samples(Mises_Both_Interaction.fit)
+Mises_Both_Interaction.post %>%
+      mutate( pumila_1_bar = ((b_kappa_Intercept)),
+            pumila_DoG = ((b_kappa_Intercept + b_kappa_TypeDoG)),
+            pumila_3_bars   = ((b_kappa_Intercept + b_kappa_Type3_bars)),
+            wendtii_1_bar   = ((b_kappa_Intercept + b_kappa_Specieswendtii)),
+            wendtii_DoG  = (
+              (b_kappa_Intercept + b_kappa_Specieswendtii + 
+                 `b_kappa_Specieswendtii:TypeDoG`)),
+            wendtii_3_bars  = 
+            ((b_kappa_Intercept + b_kappa_Specieswendtii + `b_kappa_Specieswendtii:Type3_bars`))) %>%
+            dplyr::select(-c(lp__,b_kappa_Intercept,b_kappa_TypeDoG,b_kappa_Type3_bars,b_kappa_Specieswendtii,`b_kappa_Specieswendtii:TypeDoG`,`b_kappa_Specieswendtii:Type3_bars`)) -> Mises_Both_Interaction.post2 
+
+Mises_Both_Interaction.post2 %>% gather -> Mises_Both_Interaction.post2 # df of exponentiated posteriors
+
+Mises_Both_Interaction.post2 %>%  mutate(value = A1(exp(value))) -> Mises_Both_Interaction.R   
+
+Mises_Both_Interaction.post2 %>%
+  ggplot(aes(x=value,group=key,color=key,fill=key,alpha=0.1)) + geom_density() + theme_classic() + 
+  geom_vline(xintercept=0) + xlab('log kappa')
+
+```
+
+```{r}
+Mises_Both_Interaction.R %>%
+  ggplot(aes(x=value,group=key,color=key,fill=key,alpha=0.1)) + geom_density() + theme_classic() +
+  xlab('Mean resultant length')
+```
+
+The last is another version with mean resultant length.
+
+```{r message=FALSE}
+library(ggthemes)
+theme_set(theme_tufte()) 
+
+Mises_Both_Interaction.post2 %>% 
+  ggplot(aes(key,value)) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  +
+  theme_classic() + labs(title = "kappa logged") #+ geom_hline(yintercept = 0)
+
+Mises_Both_Interaction.post2 %>% mutate(value = exp(value)) %>%
+  ggplot(aes(key,value)) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  +
+  theme_classic() + ylim(0,3.5) + labs(title = "kappa")
+
+Mises_Both_Interaction.post2 %>%
+  ggplot(aes(key,A1(exp(value)))) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  + theme_classic() + labs(title = "Mean resultant length")
+```
+
+The first of the above plots shows the kappa values and the latter has these transformed to measures of R. In both cases it can be seen that *Wendtii* is unlikely to be uniform, whereas *O. pumila* is uniform and unlikely to be very clustered. In both cases, I have also included the posterior distributions for the sum of the data, as before. These are more peaked than the results split by species because they are less uncertain, as there is more data (120 vs 40).
+
+Exactly zero, in both cases, is theoretically uniform but what we expect from a random sample of 40 observations? We can check with some simple simulation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+test  <- matrix(nrow = 20000,ncol=40)
+test2 <- vector(length = 20000)
+
+for(i in 1:nrow(test)){
+  test[i,1:40]  <- rvon_mises(40,0,0)
+  test2[i] <- mle.vonmises(test[i,1:40])$kappa }
+plot(density(test2))
+```
+
+These values seem low, so here is it again with a single sample set but using Bayes rather than MLE. 
+
+Take 1:
+
+```{r echo=FALSE}
+test1 <- rvon_mises(40,0,0)
+test1 <- tibble(heading = test1)
+hist(test1$heading,breaks=10)
+
+test1.formula <- bf(heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+test1.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"))
+
+test1.fit <- brm( test1.formula,
+  prior = test1.prior, iter = 20000,
+  data = test1, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+test1.fit <- add_criterion(test1.fit, c("loo","waic","R2")) 
+test1.post <- posterior_samples(test1.fit)
+
+#####################################
+
+test2 <- rvon_mises(40,0,0)
+test2 <- tibble(heading = test2)
+hist(test2$heading,breaks=10)
+
+test2.formula <- bf(heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+test2.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"))
+
+test2.fit <- brm( test2.formula,
+  prior = test2.prior, iter = 20000,
+  data = test2, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+test2.fit <- add_criterion(test2.fit, c("loo","waic","R2")) 
+test2.post <- posterior_samples(test2.fit)
+
+#####################################
+
+test3 <- rvon_mises(40,0,0)
+test3 <- tibble(heading = test3)
+hist(test3$heading,breaks=10)
+
+test3.formula <- bf(heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+test3.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"))
+
+test3.fit <- brm( test3.formula,
+  prior = test3.prior, iter = 20000,
+  data = test3, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+test3.fit <- add_criterion(test3.fit, c("loo","waic","R2")) 
+test3.post <- posterior_samples(test3.fit)
+
+###########################
+
+test4 <- rvon_mises(40,0,0)
+test4 <- tibble(heading = test4)
+hist(test4$heading,breaks=10)
+
+test4.formula <- bf(heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+test4.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"))
+
+test4.fit <- brm( test4.formula,
+  prior = test4.prior, iter = 20000,
+  data = test4, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+test4.fit <- add_criterion(test4.fit, c("loo","waic","R2")) 
+test4.post <- posterior_samples(test4.fit)
+
+
+```
+
+And now make traces of (i) the raw unexponentiated values outputted by the model and (ii) the kappa estimates produced by these models.
+
+
+```{r}
+test1.post %>%
+  ggplot(aes(x=b_kappa_Intercept)) + geom_density() + theme_classic() +
+  geom_density(data = test2.post,aes(x=b_kappa_Intercept)) +
+  geom_density(data = test3.post,aes(x=b_kappa_Intercept)) +
+  geom_density(data = test4.post,aes(x=b_kappa_Intercept))
+```
+
+And the R values
+
+```{r echo=FALSE}
+test1.post$R <- A1(test1.post$b_kappa_Intercept)
+test2.post$R <- A1(test2.post$b_kappa_Intercept)
+test3.post$R <- A1(test3.post$b_kappa_Intercept)
+test4.post$R <- A1(test4.post$b_kappa_Intercept)
+
+test1.post %>%
+  ggplot(aes(x=R)) + geom_density() + theme_classic() + 
+  geom_density(data=test2.post,aes(x=R)) +
+  geom_density(data=test3.post,aes(x=R)) +
+  geom_density(data=test4.post,aes(x=R))
+```
+
+The kappa found using the Bayesian intercept models are lower than for the MLE derived values. This implies that the populations for each of the 6 treatments are probably not uniform. 
+
+
+# 2019 experiments with *Ophiocoma wendtii* in differing diel and light-adaptation conditions
+
+The code below fits the model. 
+
+```{r}
+Mises_Diel_1_intercept.formula <- bf(
+  heading ~ 0, kappa ~ 1, family = von_mises(link='tan_half'))
+
+Mises_Diel_1_intercept.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"))
+
+Mises_Diel_1_intercept.fit <- brm( Mises_Diel_1_intercept.formula,
+  prior = Mises_Diel_1_intercept.prior, iter = 20000,
+  data = df2019, chains = 4,
+  control = list(adapt_delta = 0.9999999)) 
+
+Mises_Diel_1_intercept.fit <- add_criterion(Mises_Diel_1_intercept.fit, c("loo","waic","R2"))
+```
+
+Rhats of 1 and a large effective sample size in relation to the total number of obervations. The model converged well. So, let's plot the posterior distributions and the MCMC chains.
+
+```{r echo=FALSE}
+plot(Mises_Diel_1_intercept.fit)
+```
+
+```{r}
+pp_check(Mises_Diel_1_intercept.fit, type="dens_overlay", nsamples=200)
+```
+
+To interpret these, we can extract the values and reverse the log-link.
+
+```{r echo=FALSE}
+Mises_Diel_1_intercept.post <- posterior_samples(Mises_Diel_1_intercept.fit)
+Mises_Diel_1_intercept.post$k_logged <- exp(Mises_Diel_1_intercept.post$b_kappa_Intercept)
+Mises_Diel_1_intercept.post$R <- A1(exp(Mises_Diel_1_intercept.post$k_logged))
+
+Mises_Diel_1_intercept.post %>%
+  ggplot(aes(x=k_logged)) + geom_density() + theme_classic()
+
+Mises_Diel_1_intercept.post %>%
+  ggplot(aes(x=R)) + geom_density() + theme_classic()
+
+```
+
+And here is one with a dummy variable included to distingiush the signal types but still without species considered.
+
+```{r echo=FALSE}
+Mises_Diel_Period_adaptation.formula <- bf(heading ~ 0, kappa ~ Period_adaptation, family = von_mises(link='tan_half'))
+Mises_Diel_Period_adaptation.data    <- make_standata(heading ~ Period_adaptation, kappa ~ 1,
+          data = df2019, family = von_mises(link='tan_half'))
+
+Mises_Diel_Period_adaptation.prior = c(prior(lognormal(0.1, 1),  class = Intercept, dpar="kappa"),
+              prior(normal(0, 1), class = b, dpar="kappa")  )
+
+Mises_Diel_Period_adaptation.fit <- brm( Mises_Diel_Period_adaptation.formula,
+  prior = Mises_Diel_Period_adaptation.prior, iter = 20000,
+  data = df2019, chains = 4,
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_Diel_Period_adaptation.fit <- add_criterion(Mises_Diel_Period_adaptation.fit, c("loo","waic"))
+summary(Mises_Diel_Period_adaptation.fit)
+```
+
+
+
+```{r}
+plot(Mises_Diel_Period_adaptation.fit)
+```
+
+Marginal effects at the median.
+
+```{r}
+marginal_effects(Mises_Diel_Period_adaptation.fit,method = "fitted",dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL)
+
+```
+
+Posterior predictive checks.
+
+```{r}
+pp_check(Mises_Diel_Period_adaptation.fit, type="dens_overlay", nsamples=200)
+```
+
+This mean resultant length is a bit different from that calculated using circular. Now, we can implement a model which divvies it up by species.
+
+```{r}
+Mises_Diel_Period_adaptation.post <- posterior_samples(Mises_Diel_Period_adaptation.fit)
+Mises_Diel_Period_adaptation.post %>%
+      mutate( control = ((b_kappa_Intercept)),
+    day_dark    =  ((b_kappa_Intercept + b_kappa_Period_adaptationday_dark)),
+    night_dark   = ((b_kappa_Intercept + b_kappa_Period_adaptationnight_dark)),
+    night_light   = ((b_kappa_Intercept + b_kappa_Period_adaptationnight_light)))  %>%
+            dplyr::select(-c(
+              lp__,b_kappa_Intercept,b_kappa_Period_adaptationday_dark,
+              b_kappa_Period_adaptationnight_dark,
+              b_kappa_Period_adaptationnight_light)) -> Mises_Diel_Period_adaptation.post2 
+
+Mises_Diel_Period_adaptation.post2 %>% gather -> Mises_Diel_Period_adaptation.post2 
+
+Mises_Diel_Period_adaptation.post2 %>%  mutate(value = A1(exp(value))) -> Mises_Diel_Period_adaptation.R   
+
+Mises_Diel_Period_adaptation.post2 %>%
+  ggplot(aes(x=value,group=key,color=key,fill=key,alpha=0.1)) + geom_density() + theme_classic() + geom_vline(xintercept=0) 
+
+Mises_Diel_Period_adaptation.R %>%
+  ggplot(aes(x=value,group=key,color=key,fill=key,alpha=0.1)) + geom_density() + theme_classic() 
+```
+
+
+
+```{r message=FALSE}
+library(ggthemes)
+theme_set(theme_tufte()) 
+
+Mises_Diel_Period_adaptation.post2 %>% 
+  ggplot(aes(key,value)) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  +
+  theme_classic() + labs(title = "kappa logged") 
+
+Mises_Diel_Period_adaptation.post2 %>% mutate(value = exp(value)) %>%
+  ggplot(aes(key,value)) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  +
+  theme_classic() + ylim(0.5,2) + labs(title = "kappa")
+
+Mises_Diel_Period_adaptation.post2 %>%
+  ggplot(aes(key,A1(exp(value)))) + geom_violin(aes(color=key,fill=key,alpha=0.1)) + geom_tufteboxplot()  + theme_classic() + labs(title = "Mean resultant length") + ylab('Mean resultant length')
+```
+
+A different version of the main model.
+
+```{r}
+Mises_Diel_Period_adaptation_reformulated.formula <- bf(heading ~ 0, kappa ~ 0 + intercept + Period_adaptation,
+                  family = von_mises(link='tan_half', link_kappa = "identity"))
+
+Mises_Diel_Period_adaptation_reformulated.data    <- make_standata(heading ~ 1, kappa ~ Period_adaptation,
+                                  data = df2019, family = von_mises(link='tan_half', link_kappa = "identity"))
+
+Mises_Diel_Period_adaptation_reformulated.prior = prior(normal(0,3),
+                                                   class = b, dpar = "kappa", lb = 0 )
+
+Mises_Diel_Period_adaptation_reformulated.fit <- brm( Mises_Diel_Period_adaptation_reformulated.formula,
+  prior = Mises_Diel_Period_adaptation_reformulated.prior, iter = 20000,
+  data = df2019, chains = 4, 
+  inits = list(list(mu = 0, kappa = .1 ),
+  				list(mu = 0, kappa = .1 ), 
+  				list(mu = 0, kappa = .1 ), 
+  				list(mu = 0, kappa = .1 ) ),
+  control = list(adapt_delta = 0.99999)) 
+
+Mises_Diel_Period_adaptation_reformulated.fit <- add_criterion(Mises_Diel_Period_adaptation_reformulated.fit, c("loo","waic","R2")) 
+save(Mises_Diel_Period_adaptation_reformulated.fit,file="Mises_Diel_Period_adaptation_reformulated.fit")
+```
+
+Marginal effects at the median.
+
+```{r}
+marg <- marginal_effects(Mises_Diel_Period_adaptation_reformulated.fit,method = c("fitted"),
+                 dpar = "kappa", resolution = 1000, robust = T,
+                 theme=theme_classic(), nsamples = 1000, scale='response',
+                                  re_formula = NULL) 
+plot(marg)
+```
+
+Posterior predictive checks.
+
+```{r}
+pp_check(Mises_Diel_Period_adaptation_reformulated.fit, type="dens_overlay", nsamples=200)
+```
+
+
+```{r}
+Mises_Diel_Period_adaptation.post <- posterior_samples(Mises_Diel_Period_adaptation.fit)
+Mises_Diel_Period_adaptation.post %>%
+  mutate( control = (b_kappa_Intercept),
+          night_dark_control    = (b_kappa_Period_adaptationnight_dark),
+          night_light_control   = (b_kappa_Period_adaptationnight_light),
+          day_dark_control      = (b_kappa_Period_adaptationday_dark)) -> Mises_Diel_Period_adaptation.post
+
+Mises_Diel_Period_adaptation.post %>% select(-c(lp__,b_kappa_Intercept, b_kappa_Period_adaptationnight_dark,
+  b_kappa_Period_adaptationnight_light, b_kappa_Period_adaptationday_dark,control)) -> Mises_Diel_Period_adaptation.post2
+
+Mises_Diel_Period_adaptation.post2 %>%  gather -> Mises_Diel_Period_adaptation.post2
+
+Mises_Diel_Period_adaptation.post2 %>% ggplot(aes(x=value,group=key,color=key,fill=key,alpha=0.1)) + geom_density() + theme_classic() + geom_vline(xintercept = 0)
+```
+
+
+Using these estimates of kappa (calcuated using MLE) as a baseline, we contrast the other measures against this.
+
+The above densities are the difference between the posterior probabilities of kappa (concentration) for each Period_adaptation condition and the simulated 'random' uniform data.
+
+# Comparing control dataset to experimental conditions
+
+Then get contrasts for Period_adaptation types by unlogging the kappa values and finding the difference between them and the control to get a new distribution. The proportion overlap in the posterior density with zero indicates the probability that the two Period_adaptation conditons have the same value.
+
+
+```{r}
+sumlength <- function (x) { round(100* sum(x<0) / length(x),1) }
+
+print(paste0("Day dark: " , sumlength(
+  Mises_Diel_Period_adaptation.post$b_kappa_Period_adaptationday_dark) ,"%"))
+print(paste0("Night dark: " , sumlength(
+  Mises_Diel_Period_adaptation.post$b_kappa_Period_adaptationnight_dark) ,"%"))
+print(paste0("Night light: " , sumlength(
+  Mises_Diel_Period_adaptation.post$b_kappa_Period_adaptationnight_light) ,"%"))
+```
+
+None of the experimental treatments have a low probability of having the same circular concentration as the control. 
+
+
+
