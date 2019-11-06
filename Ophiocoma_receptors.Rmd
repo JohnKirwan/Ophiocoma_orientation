@@ -1,0 +1,113 @@
+---
+title: "*Ophiocoma* Photoreceptor Measurements"
+author: "John D. Kirwan"
+date: '2019-05-21'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(circular)
+library(dplyr)
+library(ggplot2)
+```
+
+Read in the data. Left and right angles are only to get values from the complete circle - it is rotated 170 degrees.
+
+```{r}
+PRC <- read_delim('Ophiocoma_receptor_data.txt',delim = "\t")
+```
+
+Modify so that if the direction is right, 180 gets siubtracted from each Image number. Image number is now a proxy for the angle of rotation around the central proximal-distal axis of the receptor. 
+
+```{r}
+make_deg <- function(nums){circular(
+  nums, type = "angles", units = "degrees", zero = pi, rotation = "clock")}
+make_rad <- function(nums){circular(
+  pi*nums/180, type = "angles", units = "radians", zero = pi, rotation = "clock")}
+
+PRC %>% mutate(Rotation = make_rad(Image_number)) -> PRC
+```
+
+
+Sort by species, pigment presence/absence, photoreceptor cell ID and then image number. 
+
+```{r}
+PRC %>%
+  arrange(Photoreceptor_cell,Direction,Image_number) -> PRC
+```
+
+
+Get the longitude and latitude positions of the points on the circle surface.
+
+```{r}
+PRC %>%
+    mutate(latitude  = ifelse(
+      Direction == "Right",  round(Angle * cos(Rotation),digits=2), 
+                            -round(Angle * cos(Rotation),digits=2)))  %>%
+    mutate(longitude = ifelse(
+      Direction == "Right",  round(Angle * sin(Rotation),digits=2),
+                             round(360 - Angle * sin(Rotation),digits=2))) -> PRC
+```
+
+
+Get widest combined angle for each receptor.
+
+```{r}
+PRC %>%
+  filter(is.na(Angle) == F) %>% # removes rows with no angle
+  group_by(Species, Pigment_gone, Photoreceptor_cell, Image_number) %>%
+    summarize(Angle = sum(Angle)
+          ) -> PRC_combined
+
+PRC_combined %>%
+  mutate(del_rho = Angle * 0.4571) %>%
+  mutate(V_co = 1 / del_rho) -> PRC_combined
+
+PRC_combined %>%
+  group_by(Species, Pigment_gone) %>%
+    ggplot(aes(Photoreceptor_cell,Angle,fill=Species,shape=Pigment_gone)) +
+    geom_violin(width=0.5) + geom_jitter(width = 0.2) + 
+      theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
+
+The *O. wendtii* angular apertures widen when the pigment is removed. 
+
+*Rough approximation of angular sensitivity.* In the case of the uncleared receptors (which, thereby, still contained pigment) almost all incident light will pass through the aperture. We estimated the optical cutoff frequency (vco) which could be achieved with these receptor groups, by assuming an approximately Gaussian optical transfer function, according to the formula: *acceptance angle (del rho) =  0.4571 x angular aperture*
+
+where  0  is  the  angular  aperture,  and  the  constant  0.4571  represents  the  ratio between the half-width of a Gaussian density and the bounds comprising 0.99 of the density (approximating  the  total  angular  aperture). 
+
+The summed angles for left and right are not the same as those that you have in the spreadsheet. Here are the summary stats.
+
+```{r}
+PRC_combined %>%
+  group_by(Species, Pigment_gone, Photoreceptor_cell) %>%
+    summarize(
+      widest    = max(Angle),
+      narrowest = min(Angle),
+      mean      = mean(Angle),
+      sd        = sd(Angle),
+   max_del_rho  = max(del_rho),
+   min_del_rho  = min(del_rho),
+   mean_del_rho = mean(del_rho),
+   med_del_rho  = median(del_rho),
+    sd_del_rho  = sd(del_rho)
+  ) -> Apertures
+print(Apertures)
+```
+
+Below is a summary of the photoreceptor data, with the left and right angles combined.
+
+```{r}
+PRC_combined %>%
+  group_by(Species,Pigment_gone) %>%
+           summarize_at(vars(Angle:del_rho),list(mean=mean,sd=sd,max=max,min=min),na.rm = TRUE
+           ) -> Spp_PRC_summary
+
+print(Spp_PRC_summary)
+```
