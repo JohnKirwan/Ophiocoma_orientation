@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
+Analyses to test whether observations of angular data are oriented towards stimuli, according to a von Mises distribution.
 
 ```{r message=FALSE}
 options(mc.cores = parallel::detectCores())
@@ -461,6 +461,8 @@ marginal_effects(Mises_Diel_Period_adaptation.fit,method = "fitted",dpar = "kapp
                                   re_formula = NULL)
 ```
 
+The night_dark treatment has a lowe kappa estimate as there is not orientation towards the stimulus. 
+
 Posterior predictive checks.
 
 ```{r}
@@ -543,6 +545,4 @@ Overlap
 ```
 
 None of the experimental treatments have a low probability of having the same circular concentration as the control. 
-
-
 

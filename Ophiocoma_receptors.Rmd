@@ -42,7 +42,6 @@ PRC %>%
   arrange(Photoreceptor_cell,Direction,Image_number) -> PRC
 ```
 
-
 Get the longitude and latitude positions of the points on the circle surface.
 
 ```{r}

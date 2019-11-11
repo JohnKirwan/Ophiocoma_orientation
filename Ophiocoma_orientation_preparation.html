@@ -426,7 +426,7 @@ df1 &lt;- droplevels.data.frame(df1)</code></pre>
     #bt specifies the stacking by a multipicative factor, 1 = stacked, 2 = 1 point&#39;s space between, 0.5 = half overlapping
     if( missing(sp) &amp; !(missing(bt)) ){sp &lt;- bt*.04}
     #   Get functions 
-        CircCI &lt;- function(mn, lci, uci, out, zro, drc, lng, ...){
+        circSD &lt;- function(mn, lci, uci, out, zro, drc, lng, ...){
             if(missing(lng)){lng&lt;-10*360/5};    if(missing(drc)){drc&lt;-&#39;clock&#39;}
             if(missing(zro)){zro &lt;- pi/2};if(missing(out)){out &lt;- 0.05}
             if(missing(uci)){uci &lt;- lci}
@@ -479,15 +479,15 @@ df1 &lt;- droplevels.data.frame(df1)</code></pre>
     if(!(ax)){
         arrows.circular( mycirc(sm[&#39;Mean&#39;]),zero=zr,col=&#39;red4&#39;,lwd=3,
          length=arl,angle=arw,shrink = sm[&#39;Rho&#39;])
-         CircCI(sm[&#39;Mean&#39;], sv, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)   }else{
+         circSD(sm[&#39;Mean&#39;], sv, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)   }else{
          sBin_Spp &lt;- summary(mycirc(hd*2))
          sv2 &lt;- degrad*sd.circular(hd*2, na.rm=T)/2
          arrows.circular( mycirc(sBin_Spp[&#39;Mean&#39;]/2),zero=zr,col=&#39;red4&#39;,lwd=3,
          length=arl,angle=arw,shrink = sBin_Spp[&#39;Rho&#39;])
          arrows.circular( mycirc(180+sBin_Spp[&#39;Mean&#39;]/2),zero=zr,col=&#39;red4&#39;,lwd=3,
          length=arl,angle=arw,shrink = sBin_Spp[&#39;Rho&#39;])
-         CircCI(sBin_Spp[&#39;Mean&#39;]/2, sv2, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)
-         CircCI(180+sBin_Spp[&#39;Mean&#39;]/2, sv2, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)
+         circSD(sBin_Spp[&#39;Mean&#39;]/2, sv2, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)
+         circSD(180+sBin_Spp[&#39;Mean&#39;]/2, sv2, out = 0.15, zro=zr, drc=&#39;clock&#39;,col=&#39;red4&#39;,lwd=1)
      } }</code></pre>
 <p>Observations divided by species only.</p>
 <pre class="r"><code>par(mfrow = c(1,2)); par(mar = c(1, 1, 1, 1) + 0.1)

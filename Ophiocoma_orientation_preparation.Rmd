@@ -74,7 +74,7 @@ Cplot <- function(headings, sp, bt, ax, ...){
 	#bt specifies the stacking by a multipicative factor, 1 = stacked, 2 = 1 point's space between, 0.5 = half overlapping
 	if( missing(sp) & !(missing(bt)) ){sp <- bt*.04}
 	#	Get functions 
-		CircCI <- function(mn, lci, uci, out, zro, drc, lng, ...){
+		circSD <- function(mn, lci, uci, out, zro, drc, lng, ...){
 			if(missing(lng)){lng<-10*360/5};	if(missing(drc)){drc<-'clock'}
 			if(missing(zro)){zro <- pi/2};if(missing(out)){out <- 0.05}
 			if(missing(uci)){uci <- lci}
@@ -127,15 +127,15 @@ Cplot <- function(headings, sp, bt, ax, ...){
 	if(!(ax)){
 		arrows.circular( mycirc(sm['Mean']),zero=zr,col='red4',lwd=3,
 		 length=arl,angle=arw,shrink = sm['Rho'])
-		 CircCI(sm['Mean'], sv, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)	}else{
+		 circSD(sm['Mean'], sv, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)	}else{
 		 sBin_Spp <- summary(mycirc(hd*2))
 		 sv2 <- degrad*sd.circular(hd*2, na.rm=T)/2
 		 arrows.circular( mycirc(sBin_Spp['Mean']/2),zero=zr,col='red4',lwd=3,
 		 length=arl,angle=arw,shrink = sBin_Spp['Rho'])
 		 arrows.circular( mycirc(180+sBin_Spp['Mean']/2),zero=zr,col='red4',lwd=3,
 		 length=arl,angle=arw,shrink = sBin_Spp['Rho'])
-		 CircCI(sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
-		 CircCI(180+sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
+		 circSD(sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
+		 circSD(180+sBin_Spp['Mean']/2, sv2, out = 0.15, zro=zr, drc='clock',col='red4',lwd=1)
 	 } }
 ```
 
