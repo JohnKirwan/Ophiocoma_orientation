@@ -26,12 +26,13 @@ Load the data, remove incomplete trials, add factors and view a summary.  We rem
 ```{r message=FALSE, warning=FALSE}
 df <- read_delim('Ophiocoma_orientation_data.txt',delim = "\t")
 df <- subset.data.frame(df, Relative_heading_degrees != "DNF")
-df$heading <- as.numeric(df$Relative_heading_degrees)*pi/180
+df$Relative_heading_degrees <- as.numeric(df$Relative_heading_degrees)
+df$heading <- df$Relative_heading_degrees*pi/180
 df$heading[df$heading > pi] <- -pi +(df$heading[df$heading > pi] -pi)
 df$Species <- as.factor(df$Species)
 df$Type    <- as.factor(df$Type)
 df$Set     <- as.factor(df$Set)
-df <- subset.data.frame(df, select = -c(Absolute_heading_degrees,Relative_heading_degrees))
+df <- subset.data.frame(df, select = -c(Absolute_heading_degrees))
 summary(df)
 ```
 
@@ -65,7 +66,6 @@ df1 <- droplevels.data.frame(df1)
 We plot the data according to species and stimulus type. This plotting function was provided by James J. Foster (Lund University) and slightly modified.
 
 ```{r message=TRUE, warning=TRUE}
-library(circular)
 Cplot <- function(headings, sp, bt, ax, ...){
 	#fit mean axis, fits mean direction unless otherwise specified
 	if(missing(ax)){ax <- F}
@@ -73,10 +73,7 @@ Cplot <- function(headings, sp, bt, ax, ...){
 	if(missing(sp) & missing(bt)){sp <- 0.04}
 	#bt specifies the stacking by a multipicative factor, 1 = stacked, 2 = 1 point's space between, 0.5 = half overlapping
 	if( missing(sp) & !(missing(bt)) ){sp <- bt*.04}
-	#	Get functions and packages
-	if(sum(rownames(installed.packages()) %in% c('CircStats', 'circular'), na.rm = T)<2){
-		install.packages(c('CircStats', 'circular'))	}
-	if(!(	sum('CircCI'%in% ls())	)){
+	#	Get functions 
 		CircCI <- function(mn, lci, uci, out, zro, drc, lng, ...){
 			if(missing(lng)){lng<-10*360/5};	if(missing(drc)){drc<-'clock'}
 			if(missing(zro)){zro <- pi/2};if(missing(out)){out <- 0.05}
@@ -95,17 +92,16 @@ Cplot <- function(headings, sp, bt, ax, ...){
 				type = 'angles', modulo = '2pi', zero = zro, 
 				rotation = drc, template = 'none'),
 			 	out*c(0.5, 1.5), modulo = '2pi', zero = zro, 
-			 	rotation = drc, ...) 		}	}
-	if(!(	sum('mycirc'%in% ls())	)){
+			 	rotation = drc, ...) 		}
 		mycirc <- function(angles, clock){
-			if(missing(clock)){clock <- T}
+			if(missing(clock)){clock <- TRUE}
 			if(clock){
 			return(		as.circular(angles,units='degrees',type='angles',
 			modulo='2pi',zero=pi/2,rotation='clock',	template='none')	)
 				}else{
 				as.circular(angles,units='degrees',type='angles',
 				 modulo='2pi',zero=pi/2,rotation='counter',template='none')
-				}	}	}
+				}	}	
 	#circular plot settings
 	increments <- 5 #degrees
 	zr <- pi/2 #start at top of screen (pi*	90	/180)
@@ -149,18 +145,19 @@ Observations divided by species only.
 ```{r message=FALSE, warning=FALSE}
 par(mfrow = c(1,2)); par(mar = c(1, 1, 1, 1) + 0.1)
   for(j in levels(as.factor(df1$Species))){
-  tempx <- as.circular(df1$heading[df1$Species == j])
-     Cplot(tempx)
+  tempx <- df1$Relative_heading_degrees[df1$Species == j]
+     Cplot(tempx, clock=TRUE)
      title(j)}
 ```
 
 *Ophiocoma wendtii* definitely orients in the experimental treatments (middle) but unclear for *O. pumila* and the *O. wendtii* control trials are not clearly oriented. We can divvy up by both species and stimulus type, as below.
 
+
 ```{r message=TRUE, warning=FALSE}
 par(mfrow = c(2,3)); par(mar = c(1, 1, 1, 1) + 0.1)
 for(i in levels(as.factor(df1$Species))){
   for(j in levels(as.factor(df1$Type))){
-  tempx <- as.circular(df1$heading[df1$Type == j & df1$Species == i])
+  tempx <- df1$Relative_heading_degrees[df1$Type == j & df1$Species == i]
      Cplot(tempx)
      title(paste(i,j))}}
 ```
@@ -178,16 +175,25 @@ df1 %>%
   summarize(num = length(heading),
             rho = rho.circular(heading),
             kappa = unlist(mle.vonmises(heading)[3]),
-            v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
-            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
-            rayl.stat=unlist(rayleigh.test(heading)[1]),
-            rayl.p= unlist(rayleigh.test(heading)[2]),
             c.mean = unlist(mean.circular(heading)[1]),
-            pent.prop = sum(in.pent)/length(in.pent)
+            proportion_oriented = sum(in.pent)/length(in.pent)
   ) -> spp_type.summary            ## output dataframe
 
 spp_type.summary
+```
 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df1 %>%
+  mutate(in.pent = ifelse(abs(heading) < pi/5, 1, 0)) %>% # for data in radians -pi to pi
+  group_by(Species,Type) %>%                # condition name
+  summarize(v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
+            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
+            rayl.stat=unlist(rayleigh.test(heading)[1]),
+            rayl.p= unlist(rayleigh.test(heading)[2])
+  ) -> spp_type.stats            ## output dataframe
+
+spp_type.stats
 ```
 
 The table shows the test statistic and p-value for test of uniformity. The pent prop is the proprtion which fall into the 72 degree sectpr with the target midpoint at its midpoint. The rhos describe what was indicated by the red arrows in the plots (mean resultant length).
@@ -231,11 +237,10 @@ df2 <- droplevels.data.frame(df2)
 
 Observations divided by species only. For comparison, the control data for *Ophiocoma wendtii* from subsequent set of experiments (2019) is included in the rightmost plot. 
 
-
 ```{r message=FALSE, warning=FALSE}
 par(mfrow = c(2,2)); par(mar = c(1, 1, 1, 1) + 0.1)
   for(j in levels(as.factor(df2$Period_adaptation))){
-  tempx <- as.circular(df2$heading[df2$Period_adaptation == j])
+  tempx <- df2$Relative_heading_degrees[df2$Period_adaptation == j]
      Cplot(tempx)
      title(j)}
 ```
@@ -249,15 +254,24 @@ df2 %>%
   summarize(num = length(heading),
             rho = rho.circular(heading),
             kappa = unlist(mle.vonmises(heading)[3]),
-            v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
-            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
-            rayl.stat=unlist(rayleigh.test(heading)[1]),
-            rayl.p= unlist(rayleigh.test(heading)[2]),
             c.mean = unlist(mean.circular(heading)[1]),
-            pent.prop = sum(in.pent)/length(in.pent)
+            proportion_oriented = sum(in.pent)/length(in.pent)
   ) -> condition.summary            ## output dataframe
 
 condition.summary
 ```
 
-No evidence is found for concentration of headings. In addition, we modelled the data according to a von Mises distribution and (considering animals approaching the stimulus as successful orientation) to a binomial distribution.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df2 %>%
+  mutate(in.pent = ifelse(abs(heading) < pi/5, 1, 0)) %>% # for data in radians -pi to pi
+  group_by(Period_adaptation) %>%                # condition name
+  summarize(v.stat=unlist(rayleigh.test(heading,mu=0)[1]),
+            v.p= unlist(rayleigh.test(heading,mu=0)[2]),
+            rayl.stat=unlist(rayleigh.test(heading)[1]),
+            rayl.p= unlist(rayleigh.test(heading)[2])
+  ) -> spp_type.stats            ## output dataframe
+spp_type.stats
+```
+
+
+No evidence is found for concentration of headings. 
